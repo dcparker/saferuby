@@ -2,6 +2,9 @@
 
 require 'lib/tcphub'
 require 'lib/http11_parser'
+require 'rubygems'
+
+Thread.abort_on_exception = true
 
 class ScriptRunner
   # Http11Parser handles the receive_data callback of TcpHub
@@ -28,17 +31,22 @@ class ScriptRunner
     #   - so that we can continue right on to the next request, and
     #   - so that SAFE will be sandboxed.
     Thread.new do
-      # Save these variables for the sandboxed environment
-      Thread.current[:request] = request
-      Thread.current[:socket] = @socket
+      begin
+        # Save these variables for the sandboxed environment
+        Thread.current[:request] = request
+        Thread.current[:socket] = @socket
 
-      # Set a security level that restricts ruby for the rest of this thread
-      $SAFE = 2
-
-      # Run this wrapper inside an anonymous module. The environment
-      # loaded so far is available to this new environment, but now
-      # it can't modify this main memory space.
-      load("wrapper.rb", true)
+        # Run the wrapper inside an anonymous module. The environment
+        # loaded so far is available to this new environment, but now
+        # it can't modify this main memory space.
+        load("wrapper.rb", true)
+      rescue => e
+        @socket.write "Security Error: #{e.to_s}\n#{e.backtrace.join("\n")}"
+        begin
+          @socket.close
+        rescue IOError
+        end
+      end
     end
   end
 end

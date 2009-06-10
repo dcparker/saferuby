@@ -106,63 +106,62 @@ class TcpHub
     @status = :running
     trap("INT") {stop!} # This will end the event loop within 0.5 seconds when you hit Ctrl+C
     loop do
-      begin
-        # Clean up any closed clients
-        clients.each_key do |sock|
-          if sock.closed?
-            clients[sock].upon_unbind if clients[sock].respond_to?(:upon_unbind)
-            clients.delete(sock)
+      # Clean up any closed clients
+      clients.each_key do |sock|
+        if sock.closed?
+          clients[sock].upon_unbind if clients[sock].respond_to?(:upon_unbind)
+          clients.delete(sock)
+        end
+      end
+      @router.each_key { |sock| @router.delete(sock) if sock.closed? }
+      
+      event = select(listen_sockets + client_sockets,nil,nil,0.5)
+      if event.nil? # nil would be a timeout, we'd do nothing and start loop over. Of course here we really have no timeouts...
+        if !running?
+          if client_sockets.empty?
+            # It's the next time around after we closed all the client connections.
+            break
+          else
+            puts "Closing all client connections."
+            close_all_clients!
+            puts "Closing all listening ports."
+            shutdown_listeners!
           end
         end
-      
-        event = select(listen_sockets + client_sockets,nil,nil,0.5)
-        if event.nil? # nil would be a timeout, we'd do nothing and start loop over. Of course here we really have no timeout...
-          if !running?
-            if client_sockets.empty?
-              # It's the next time around after we closed all the client connections.
-              break
-            else
-              puts "Closing all client connections."
-              close_all_clients!
-              puts "Closing all listening ports."
-              shutdown_listeners!
-            end
-          end
-        else
-          event[0].each do |sock| # Iterate through all sockets that have pending activity
-            if listen_sockets.include?(sock) # Received a new connection to a listening socket
-              new_sock = accept_client(sock)
-              clients[new_sock].upon_new_connection if clients[new_sock].respond_to?(:upon_new_connection)
-            else # Activity on a client-connected socket
-              if sock.eof? # Socket's been closed by the client
-                puts "Connection #{clients[sock].inspect} was closed by the client."
-                sock.close
-                clients[sock].upon_unbind if clients[sock].respond_to?(:upon_unbind)
-                client = clients[sock]
-                clients.delete(sock)
-              else # Data in from the client
-                begin
-                  if sock.respond_to?(:read_nonblock)
-                    10.times {
-                      data = sock.read_nonblock(4096)
-                      clients[sock].receive_data(data)
-                      break if sock.closed?
-                    }
-                  else
-                    data = sock.sysread(4096)
+      else
+        event[0].each do |sock| # Iterate through all sockets that have pending activity
+          if listen_sockets.include?(sock) # Received a new connection to a listening socket
+            new_sock = accept_client(sock)
+            clients[new_sock].upon_new_connection if clients[new_sock].respond_to?(:upon_new_connection)
+          else # Activity on a client-connected socket
+            if sock.closed? || sock.eof? # Socket's been closed by the client
+              puts "Connection #{clients[sock].inspect} was closed by the client."
+              sock.close
+              clients[sock].upon_unbind if clients[sock].respond_to?(:upon_unbind)
+              client = clients[sock]
+              clients.delete(sock)
+            else # Data in from the client
+              begin
+                if sock.respond_to?(:read_nonblock)
+                  10.times {
+                    sock.eof? rescue break
+                    break if sock.closed?
+                    data = sock.read_nonblock(4096)
                     clients[sock].receive_data(data)
-                  end
-                rescue Errno::EAGAIN, Errno::EWOULDBLOCK => e
-                  # no-op. This will likely happen after every request, but that's expected. It ensures that we're done with the request's data.
-                rescue Errno::ECONNRESET, Errno::ECONNREFUSED, EOFError => e
-                  puts "Closed Err: #{e.inspect}"; $stdout.flush
-                  clients[sock].upon_unbind if clients[sock].respond_to?(:upon_unbind)
+                  }
+                else
+                  data = sock.sysread(4096)
+                  clients[sock].receive_data(data)
                 end
+              rescue Errno::EAGAIN, Errno::EWOULDBLOCK => e
+                # no-op. This will likely happen after every request, but that's expected. It ensures that we're done with the request's data.
+              rescue Errno::ECONNRESET, Errno::ECONNREFUSED, EOFError => e
+                puts "Closed Err: #{e.inspect}"; $stdout.flush
+                clients[sock].upon_unbind if clients[sock].respond_to?(:upon_unbind)
               end
             end
           end
         end
-      rescue IOError # this is tripped when we thread away and close the socket sometime within the thread.
       end
     end
   end
