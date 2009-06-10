@@ -40,12 +40,15 @@ class ScriptRunner
         # loaded so far is available to this new environment, but now
         # it can't modify this main memory space.
         load("wrapper.rb", true)
-      rescue => e
+      rescue SecurityError, IOError, LoadError, SyntaxError => e
         @socket.write "Security Error: #{e.to_s}\n#{e.backtrace.join("\n")}"
+        puts "[#{Time.now.inspect}] Done (Error)"
         begin
           @socket.close
         rescue IOError
         end
+      rescue => e
+        puts "[#{Time.now.inspect}] Done (Error)"
       end
     end
   end

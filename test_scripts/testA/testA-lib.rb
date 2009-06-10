@@ -1,5 +1,3 @@
-module TestALib
-  def self.hello
-    return "Hello, World!"
-  end
+class Representative
+  include HTTParty
 end
