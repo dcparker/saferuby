@@ -7,8 +7,8 @@ puts "Loaded testA.rb"
 require 'testA-lib'
 
 class RubyHook
-  def respond_to(loc, request)
-    # Code is run at runtime with save-level 4.
-    TestALib.hello
+  def respond_to(request)
+    # Code is run at runtime with save-level 2.
+    return "#{TestALib.hello} (#{request.resource_uri}) :)"
   end
 end
